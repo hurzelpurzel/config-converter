@@ -1,5 +1,7 @@
 # config-converter
 
+![build](https://github.com/hurzelpurzel/config-converter/actions/workflows/build.yml/badge.svg)
+
 A small, dependency-light command-line tool written in Go that converts Spring
 `application.properties` files to YAML and YAML back to `.properties` files.
 
@@ -14,6 +16,10 @@ Or install it into `$GOBIN`:
 ```sh
 go install .
 ```
+
+GitHub Actions tests the project and builds binaries for Linux, macOS and
+Windows (amd64 and arm64) on every push. Tags matching `v*` are published as
+GitHub releases with the binaries and SHA-256 checksums attached.
 
 ## Usage
 
