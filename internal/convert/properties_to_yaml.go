@@ -54,6 +54,10 @@ func PropertiesToYAML(data []byte) ([]byte, error) {
 		return commentOnlyYAML(doc.Header, doc.Footer), nil
 	}
 
+	for i := range doc.Entries {
+		doc.Entries[i] = extractInlineComment(doc.Entries[i])
+	}
+
 	root, err := buildTree(doc)
 	if err != nil {
 		return nil, err
@@ -83,14 +87,117 @@ func PropertiesToYAML(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+type preparedEntry struct {
+	entry   properties.Entry
+	segs    []segment
+	literal bool
+}
+
+func segmentSignature(segs []segment) string {
+	var b strings.Builder
+	for _, seg := range segs {
+		if seg.isIndex {
+			b.WriteByte('i')
+			b.WriteString(strconv.Itoa(seg.index))
+		} else {
+			b.WriteByte('s')
+			b.WriteString(strconv.Itoa(len(seg.name)))
+			b.WriteByte(':')
+			b.WriteString(seg.name)
+		}
+		b.WriteByte('/')
+	}
+	return b.String()
+}
+
+// extractInlineComment moves a trailing " # comment" from a property value
+// into the entry comment. Spring's sample properties use this style for
+// documentation comments, which belong above the key in YAML.
+func extractInlineComment(entry properties.Entry) properties.Entry {
+	value, comment, ok := splitInlineComment(entry.Value)
+	if !ok {
+		return entry
+	}
+	entry.Value = value
+	if entry.Comment == "" {
+		entry.Comment = comment
+	} else if comment != "" {
+		entry.Comment += "\n" + comment
+	}
+	return entry
+}
+
+func splitInlineComment(value string) (string, string, bool) {
+	for i := 0; i < len(value); i++ {
+		if value[i] != '#' {
+			continue
+		}
+		if i > 0 && !isInlineSpace(value[i-1]) {
+			continue
+		}
+		if i+1 < len(value) && value[i+1] != ' ' && value[i+1] != '\t' {
+			continue
+		}
+		comment := strings.TrimLeft(value[i+1:], " \t")
+		return strings.TrimRight(value[:i], " \t"), comment, true
+	}
+	return value, "", false
+}
+
+func isInlineSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\f'
+}
+
 func buildTree(doc *properties.Document) (*treeNode, error) {
-	root := newMapNode()
+	prepared := make([]preparedEntry, 0, len(doc.Entries))
+	parentPaths := make(map[string]bool)
 	for _, entry := range doc.Entries {
 		segs, err := splitKey(entry.Key)
 		if err != nil {
 			return nil, fmt.Errorf("line %d: invalid property key %q: %w", entry.Line, entry.Key, err)
 		}
+		for i := 1; i < len(segs); i++ {
+			parentPaths[segmentSignature(segs[:i])] = true
+		}
+		prepared = append(prepared, preparedEntry{entry: entry, segs: segs})
+	}
 
+	// A property whose key is also the prefix of another property cannot be
+	// nested in YAML without turning it into a mapping. Keep such a key
+	// literal at the root (for example "shell.auth" next to "shell.auth.*")
+	// so no value is lost. A single-segment key still conflicts with the
+	// mapping of the same name and remains an error.
+	for i := range prepared {
+		entry := &prepared[i]
+		if len(entry.segs) > 1 && parentPaths[segmentSignature(entry.segs)] {
+			entry.literal = true
+		}
+	}
+
+	root := newMapNode()
+	for _, prepared := range prepared {
+		entry := prepared.entry
+
+		if prepared.literal {
+			child, ok := root.children[entry.Key]
+			if !ok {
+				child = &treeNode{kind: pendingNode}
+				root.children[entry.Key] = child
+				root.keys = append(root.keys, entry.Key)
+			}
+			if child.kind != pendingNode && child.kind != scalarNode {
+				return nil, fmt.Errorf("line %d: property %q conflicts with a %s defined at line %d",
+					entry.Line, entry.Key, kindName(child.kind), child.line)
+			}
+			child.kind = scalarNode
+			child.value = entry.Value
+			child.comment = entry.Comment
+			child.footComment = entry.FootComment
+			child.line = entry.Line
+			continue
+		}
+
+		segs := prepared.segs
 		cur := root
 		for i, seg := range segs {
 			child, err := childFor(cur, seg)

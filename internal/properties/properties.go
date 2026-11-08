@@ -51,6 +51,31 @@ func Parse(r io.Reader) (*Document, error) {
 	continuing := false
 	lineNo := 0
 
+	// A one-line lookahead is needed to recognise continuation lines that end
+	// in an escaped backslash (see continuation).
+	var lookahead string
+	haveLookahead := false
+	nextLine := func() (string, bool) {
+		if haveLookahead {
+			haveLookahead = false
+			return lookahead, true
+		}
+		if scanner.Scan() {
+			return scanner.Text(), true
+		}
+		return "", false
+	}
+	peekLine := func() (string, bool) {
+		if !haveLookahead {
+			if !scanner.Scan() {
+				return "", false
+			}
+			lookahead = scanner.Text()
+			haveLookahead = true
+		}
+		return lookahead, true
+	}
+
 	finishLogical := func() error {
 		entry, err := parseLogical(logical.String(), logicalLine)
 		if err != nil {
@@ -69,14 +94,18 @@ func Parse(r io.Reader) (*Document, error) {
 		return nil
 	}
 
-	for scanner.Scan() {
+	for {
+		line, ok := nextLine()
+		if !ok {
+			break
+		}
 		lineNo++
-		line := scanner.Text()
 
 		if continuing {
 			line = strings.TrimLeft(line, " \t\f")
-			if hasContinuation(line) {
-				logical.WriteString(line[:len(line)-1])
+			next, hasNext := peekLine()
+			if more, strip := continuation(line, next, hasNext); more {
+				logical.WriteString(line[:len(line)-strip])
 				continue
 			}
 			logical.WriteString(line)
@@ -99,8 +128,9 @@ func Parse(r io.Reader) (*Document, error) {
 
 		logicalLine = lineNo
 		logical.Reset()
-		if hasContinuation(line) {
-			logical.WriteString(line[:len(line)-1])
+		next, hasNext := peekLine()
+		if more, strip := continuation(line, next, hasNext); more {
+			logical.WriteString(line[:len(line)-strip])
 			continuing = true
 			continue
 		}
@@ -123,12 +153,53 @@ func Parse(r io.Reader) (*Document, error) {
 	return doc, nil
 }
 
-func hasContinuation(line string) bool {
+func trailingBackslashes(line string) int {
 	n := 0
 	for i := len(line) - 1; i >= 0 && line[i] == '\\'; i-- {
 		n++
 	}
-	return n%2 == 1
+	return n
+}
+
+// continuation reports whether line continues on the next physical line and
+// how many trailing backslashes to drop.
+//
+// Java continues a logical line after an odd number of backslashes. As a
+// tolerance for hand-wrapped files (for example the sample in Spring Boot's
+// appendix) a trailing escaped backslash ("\\") followed by an indented line
+// is also treated as a continuation.
+func continuation(line, next string, hasNext bool) (bool, int) {
+	n := trailingBackslashes(line)
+	if n == 0 {
+		return false, 0
+	}
+	if n%2 == 1 {
+		return true, 1
+	}
+	if n == 2 && hasNext {
+		trimmed := strings.TrimLeft(next, " \t\f")
+		if trimmed == "" || len(trimmed) == len(next) || trimmed[0] == '#' || trimmed[0] == '!' {
+			return false, 0
+		}
+		// Do not swallow an indented line that is itself a new property.
+		if hasSeparator(trimmed) {
+			return false, 0
+		}
+		return true, 2
+	}
+	return false, 0
+}
+
+func hasSeparator(line string) bool {
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '\\':
+			i++
+		case '=', ':':
+			return true
+		}
+	}
+	return false
 }
 
 func commentText(line string) string {

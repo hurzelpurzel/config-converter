@@ -79,6 +79,50 @@ spring:
 	}
 }
 
+func TestPropertiesToYAMLInlineComments(t *testing.T) {
+	input := "# header\n# BANNER\nbanner.charset=UTF-8 # Banner file encoding.\nbanner.location=classpath:banner.txt # Banner file location.\nlogging.config= # Logging config.\n"
+	want := "# header\n# BANNER\nbanner:\n  # Banner file encoding.\n  charset: UTF-8\n  # Banner file location.\n  location: classpath:banner.txt\nlogging:\n  # Logging config.\n  config: \"\"\n"
+	got, err := PropertiesToYAML([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("unexpected YAML\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPropertiesToYAMLKeepsHashInValue(t *testing.T) {
+	input := "url=https://example.com/#anchor\ntext=foo #comment\n"
+	want := "url: https://example.com/#anchor\ntext: 'foo #comment'\n"
+	got, err := PropertiesToYAML([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("unexpected YAML\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPropertiesToYAMLKeyPrefixConflict(t *testing.T) {
+	input := "shell.auth=simple\nshell.auth.jaas.domain=my-domain\n"
+	want := "shell.auth: simple\nshell:\n  auth:\n    jaas:\n      domain: my-domain\n"
+	got, err := PropertiesToYAML([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("unexpected YAML\n got:\n%s\nwant:\n%s", got, want)
+	}
+
+	propsData, err := YAMLToProperties(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(propsData) != input {
+		t.Fatalf("round trip = %q, want %q", propsData, input)
+	}
+}
+
 func TestPropertiesToYAMLFooterAndCommentsOnly(t *testing.T) {
 	got, err := PropertiesToYAML([]byte("a=1\n# footer\n"))
 	if err != nil {

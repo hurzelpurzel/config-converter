@@ -112,7 +112,9 @@ app.servers[1].host=two
   - `settings[some.key]` becomes a map key (`some.key`)
 - YAML mappings, sequences, scalars, null values, anchors, aliases and merge keys
   (`<<`)
-- Comments are preserved on a best-effort basis.
+- Comments are preserved on a best-effort basis. Trailing inline comments
+  (`key=value # comment`) are emitted as YAML comments above the corresponding
+  key.
 
 All property values are emitted as YAML strings, so values such as `8080` or
 `true` keep their exact textual representation.
@@ -127,9 +129,11 @@ All property values are emitted as YAML strings, so values such as `8080` or
   (`a: {b.c: 1}` becomes `a.b.c=1`); the original nesting cannot be restored.
 - Comments may move to a neighbouring property because `.properties` has no
   syntax for attaching comments to a value.
-- Duplicate properties are allowed (last value wins), but a property cannot be
-  both a scalar and a parent at the same time (`a=1` plus `a.b=2` is an error,
-  because YAML cannot represent it).
+- Duplicate properties are allowed (last value wins). A key that is also the
+  prefix of a longer key (`shell.auth` next to `shell.auth.jaas.domain`) is kept
+  as a literal root key so both values survive the conversion. A single-segment
+  key cannot be both a scalar and a parent at the same time (`a=1` plus `a.b=2`
+  is an error, because YAML cannot represent it).
 
 ## Development
 

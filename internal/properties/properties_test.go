@@ -52,6 +52,40 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseEscapedBackslashContinuation(t *testing.T) {
+	// Spring Boot's appendix wraps long values with a trailing "\\" and an
+	// indented continuation line.
+	src := "regex=a\\\\\n    b\\\\\n    c\nnext=1\n"
+	doc, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Entries) != 2 {
+		t.Fatalf("got %d entries: %#v", len(doc.Entries), doc.Entries)
+	}
+	if doc.Entries[0].Key != "regex" || doc.Entries[0].Value != "abc" {
+		t.Errorf("entry 0 = %#v", doc.Entries[0])
+	}
+	if doc.Entries[1].Key != "next" || doc.Entries[1].Value != "1" {
+		t.Errorf("entry 1 = %#v", doc.Entries[1])
+	}
+}
+
+func TestParseEvenBackslashesDoNotContinue(t *testing.T) {
+	for _, src := range []string{"a=value\\\\\nb=2\n", "a=value\\\\\n    b=2\n"} {
+		doc, err := Parse(strings.NewReader(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.Entries) != 2 {
+			t.Fatalf("Parse(%q): got %d entries: %#v", src, len(doc.Entries), doc.Entries)
+		}
+		if doc.Entries[0].Value != `value\` {
+			t.Errorf("Parse(%q): entry 0 = %#v", src, doc.Entries[0])
+		}
+	}
+}
+
 func TestParseCommentsAndContinuationAtEOF(t *testing.T) {
 	doc, err := Parse(strings.NewReader("# at start\n\na=1\n# trailing\nb=two\\\n"))
 	if err != nil {
