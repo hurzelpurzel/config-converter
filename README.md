@@ -2,8 +2,10 @@
 
 ![build](https://github.com/hurzelpurzel/config-converter/actions/workflows/build.yml/badge.svg)
 
-A small, dependency-light command-line tool written in Go that converts Spring
-`application.properties` files to YAML and YAML back to `.properties` files.
+A small command-line tool written in Go that converts Spring
+`application.properties` files to YAML and YAML back to `.properties` files. It
+can also infer a JSON Schema from a YAML document and validate YAML against a
+schema.
 
 ## Build
 
@@ -27,15 +29,20 @@ GitHub releases with the binaries and SHA-256 checksums attached.
 config-converter <command> [flags] [input]
 
 Commands:
-  to-yaml, properties-to-yaml, p2y   convert properties to YAML
+  to-yaml, properties-to-yaml, p2y  convert properties to YAML
   to-properties, yaml-to-properties, y2p
-                                     convert YAML to properties
+                                    convert YAML to properties
+  generate-schema, to-schema, yaml-to-schema, y2s
+                                    generate a JSON Schema from YAML
+  validate                          validate YAML against a JSON Schema
 
 Arguments:
   input   file to read; omit or use "-" to read stdin
 
 Flags:
   -o, --output FILE   write to FILE instead of stdout
+  -s, --schema FILE   JSON Schema (JSON or YAML) for validate; may also be
+                      passed as the second positional argument
   -h, --help          show help
   -v, --version       show the version
 ```
@@ -97,6 +104,51 @@ spring.application.name=my-app
 management.endpoints.web.exposure.include=health,info
 app.servers[0].host=one
 app.servers[1].host=two
+```
+
+### JSON Schema generation
+
+Generate a JSON Schema from an existing YAML file:
+
+```sh
+config-converter generate-schema application.yml
+config-converter generate-schema application.yml -o application.schema.json
+cat application.yml | config-converter to-schema
+```
+
+The generator infers object properties, required keys, scalar types and array
+item types. For arrays of objects, the properties of all elements are merged;
+keys that are not present on every element are optional. Unknown properties are
+rejected by the generated schema. Comments immediately above a key are copied
+to that property's `description`; multi-line comments keep their line breaks.
+
+### Validation
+
+Validate a YAML file against a JSON Schema:
+
+```sh
+config-converter validate application.yml --schema application.schema.json
+config-converter validate application.yml application.schema.json
+cat application.yml | config-converter validate - -s application.schema.json
+```
+
+The command exits with status `0` when the document is valid and status `1`
+when it is invalid. Validation errors are written to stderr. Schemas can be
+written as JSON or YAML and may use any JSON Schema draft supported by the
+validator (draft 2020-12 is the default when `$schema` is omitted).
+
+### Go API
+
+The schema functionality is also available as a module-internal package:
+
+```go
+import "github.com/hurzelpurzel/config-converter/internal/schema"
+
+// Infer a JSON Schema from YAML.
+schemaJSON, err := schema.GenerateYAML(yamlData)
+
+// Validate YAML against a JSON Schema (JSON or YAML schema).
+err = schema.ValidateYAML(yamlData, schemaJSON)
 ```
 
 ## What is supported

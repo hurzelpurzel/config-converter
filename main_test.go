@@ -57,6 +57,9 @@ func TestRunErrors(t *testing.T) {
 		{[]string{"to-yaml", "--nope"}, "", 2},
 		{[]string{"to-yaml", "-o"}, "", 2},
 		{[]string{"to-properties"}, "a=1\na.b=2\n", 1},
+		{[]string{"generate-schema", "a", "b"}, "", 2},
+		{[]string{"to-yaml", "--schema", "schema.json"}, "", 2},
+		{[]string{"validate"}, "", 2},
 	}
 
 	for _, test := range tests {
@@ -84,5 +87,72 @@ func TestRunHelpAndVersion(t *testing.T) {
 	}
 	if !strings.HasPrefix(stdout.String(), "config-converter ") {
 		t.Fatalf("version output = %q", stdout.String())
+	}
+}
+
+func TestRunGenerateSchema(t *testing.T) {
+	input := "server:\n  port: 8080\n  enabled: true\n"
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"generate-schema"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{
+		`"$schema": "https://json-schema.org/draft/2020-12/schema"`,
+		`"port"`,
+		`"type": "integer"`,
+		`"enabled"`,
+		`"type": "boolean"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("schema output does not contain %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestRunValidate(t *testing.T) {
+	dir := t.TempDir()
+	schemaPath := filepath.Join(dir, "application.schema.json")
+	yamlPath := filepath.Join(dir, "application.yml")
+	if err := os.WriteFile(schemaPath, []byte(`{
+		"type": "object",
+		"properties": {"port": {"type": "integer"}},
+		"required": ["port"]
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(yamlPath, []byte("port: 8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"validate", yamlPath, "--schema", schemaPath}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("valid file: exit code = %d, stderr: %s", code, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("valid file wrote stdout: %q", stdout.String())
+	}
+
+	if err := os.WriteFile(yamlPath, []byte("port: many\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"validate", yamlPath, schemaPath}, strings.NewReader(""), &stdout, &stderr); code != 1 {
+		t.Fatalf("invalid file: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "does not match schema") {
+		t.Errorf("invalid file stderr = %q", stderr.String())
+	}
+}
+
+func TestRunValidateMissingSchema(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"validate"}, strings.NewReader("port: 8080\n"), &stdout, &stderr); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "requires a schema file") {
+		t.Errorf("stderr = %q", stderr.String())
 	}
 }
